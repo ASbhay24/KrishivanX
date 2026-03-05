@@ -4,6 +4,7 @@ from openai import OpenAI
 import speech_recognition as sr
 from gtts import gTTS
 import io
+import os
 
 # ==========================================
 # 1. APP CONFIGURATION & PERSISTENT STATE
@@ -24,7 +25,7 @@ def save_lang():
     st.session_state.stored_lang = st.session_state.lang_widget
 
 # !!! IMPORTANT: PASTE YOUR REAL TOKEN HERE !!!
-GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 client = OpenAI(base_url="https://models.inference.ai.azure.com", api_key=GITHUB_TOKEN)
 
 # 12 Supported Languages
@@ -366,4 +367,5 @@ if st.session_state.page == 'Home':
 elif st.session_state.page == 'Image Input':
     page_image()
 elif st.session_state.page == 'Audio Input':
+
     page_audio()
