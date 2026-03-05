@@ -1,371 +1,225 @@
 import streamlit as st
+import os
 import base64
+import io
+import uuid
+from datetime import datetime
 from openai import OpenAI
 import speech_recognition as sr
 from gtts import gTTS
-import io
-import os
 
-# ==========================================
-# 1. APP CONFIGURATION & PERSISTENT STATE
-# ==========================================
-st.set_page_config(page_title="KrishivanX", page_icon="🌱", layout="wide")
+# Azure Cosmos DB imports
+from azure.cosmos import CosmosClient, exceptions
 
-# Initialize Memory Vaults
-if 'page' not in st.session_state:
-    st.session_state.page = 'Home'
-if 'stored_lang' not in st.session_state:
-    st.session_state.stored_lang = 'English'
-if 'img_response' not in st.session_state:
-    st.session_state.img_response = None
-if 'aud_response' not in st.session_state:
-    st.session_state.aud_response = None
+# --- 1. PAGE CONFIGURATION & UI SETUP ---
+st.set_page_config(page_title="KrishivanX - AI Crop Doctor", page_icon="🌾", layout="centered")
 
-def save_lang():
-    st.session_state.stored_lang = st.session_state.lang_widget
-
-# !!! IMPORTANT: PASTE YOUR REAL TOKEN HERE !!!
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-client = OpenAI(base_url="https://models.inference.ai.azure.com", api_key=GITHUB_TOKEN)
-
-# 12 Supported Languages
-SUPPORTED_LANGUAGES = {
-    "English": ("en-IN", "en"),
-    "Hindi (हिंदी)": ("hi-IN", "hi"),
-    "Marathi (मराठी)": ("mr-IN", "mr"),
-    "Bengali (বাংলা)": ("bn-IN", "bn"),
-    "Telugu (తెలుగు)": ("te-IN", "te"),
-    "Tamil (தமிழ்)": ("ta-IN", "ta"),
-    "Kannada (ಕನ್ನಡ)": ("kn-IN", "kn"),
-    "Malayalam (മലയാളം)": ("ml-IN", "ml"),
-    "Gujarati (ગુજરાતી)": ("gu-IN", "gu"),
-    "Punjabi (ਪੰਜਾਬੀ)": ("pa-IN", "pa"),
-    "Odia (ଓଡ଼ିଆ)": ("or-IN", "or"),
-    "Assamese (অসমীয়া)": ("as-IN", "as")
-}
-
-# ==========================================
-# 2. THE CSS SLEDGEHAMMER (AUTO-SYNCS WITH BROWSER)
-# ==========================================
-@st.cache_data
-def get_cached_css():
-    css = """
+# Custom CSS for adaptive Dark/Light mode and styling
+st.markdown("""
     <style>
-        @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
-
-        /* 1. CSS VARIABLES (AUTO-DETECT BROWSER THEME) */
-        :root {
-            --bg-color: #ffffff;
-            --text-color: #000000;
-            --card-bg: #ffffff;
-            --border-color: #e2e8f0;
-            --input-bg: #f8f9fa;
-            --primary-green: #8CC63F;
-        }
-
-        /* If the user's system is in dark mode, these colors take over automatically! */
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --bg-color: #121212;
-                --text-color: #ffffff;
-                --card-bg: #1E1E1E;
-                --border-color: #333333;
-                --input-bg: #2b2b2b;
-            }
-        }
-
-        /* 2. FORCE GLOBAL BACKGROUNDS & ZERO PADDING */
-        .stApp, [data-testid="stAppViewContainer"] {
-            background-color: var(--bg-color) !important;
-            background-image: none !important;
-            padding: 0px !important;
-        }
-        
-        .main .block-container { 
-            padding-top: 0rem !important; 
-            padding-bottom: 0rem !important;
-            margin-top: 0rem !important;
-            margin-bottom: 0rem !important;
-            max-width: 1200px; 
-        }
-        
-        header[data-testid="stHeader"] { display: none !important; }
-        
-        html, body, p, span, h1, h2, h3, h4, h5, h6, label, div {
-            color: var(--text-color) !important;
-            font-family: 'Segoe UI', Tahoma, sans-serif !important;
-        }
-
-        /* 3. FIX DROPDOWN MENUS (SOLID COLORS BASED ON THEME) */
-        [data-testid="stSelectbox"] div[data-baseweb="select"] {
-            background-color: var(--card-bg) !important;
-            border: 1px solid var(--border-color) !important;
-        }
-        [data-testid="stSelectbox"] span { color: var(--text-color) !important; font-weight: bold !important; }
-        div[data-baseweb="popover"] > div, ul[data-baseweb="menu"] { background-color: var(--card-bg) !important; }
-        ul[data-baseweb="menu"] li {
-            color: var(--text-color) !important;
-            background-color: var(--card-bg) !important;
-            font-weight: bold !important;
-        }
-        ul[data-baseweb="menu"] li:hover, ul[data-baseweb="menu"] li[aria-selected="true"] {
-            background-color: var(--primary-green) !important; color: #ffffff !important;
-        }
-
-        /* 4. FIX TOGGLE BUTTONS (Take Photo/Upload) */
-        [data-testid="stRadio"] [role="radio"] { display: none !important; }
-        [data-testid="stRadio"] label {
-            background-color: var(--card-bg) !important;
-            border: 2px solid var(--border-color) !important;
-            padding: 10px 24px !important;
-            border-radius: 25px !important;
-            cursor: pointer !important;
-            margin-right: 10px !important;
-            transition: all 0.3s ease !important;
-        }
-        [data-testid="stRadio"] label p { font-weight: bold !important; font-size: 16px !important; margin: 0 !important; }
-        [data-testid="stRadio"] label[data-checked="true"] {
-            background-color: var(--primary-green) !important; border-color: var(--primary-green) !important;
-        }
-        [data-testid="stRadio"] label[data-checked="true"] p { color: #ffffff !important; }
-        [data-testid="stRadio"] > div { display: flex; justify-content: center; }
-
-        /* 5. MAIN ACTION BUTTONS */
-        button[kind="primary"] {
-            background-color: var(--primary-green) !important;
-            color: #ffffff !important; border-radius: 25px !important; border: none !important;
-            padding: 10px 30px !important; font-weight: bold !important;
-        }
-        button[kind="primary"]:hover { transform: scale(1.05); }
-        
-        button[kind="secondary"] {
-            border-radius: 25px !important; font-weight: bold !important; padding: 10px 30px !important;
-            border: 2px solid var(--primary-green) !important; color: var(--text-color) !important;
-            background-color: transparent !important;
-        }
-
-        /* 6. CARDS & UPLOADERS */
-        .custom-card {
-            background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px;
-            padding: 30px; margin-top: 20px; margin-bottom: 20px; text-align: center;
-        }
-        [data-testid="stDropzone"] {
-            background-color: var(--input-bg) !important; 
-            border: 2px dashed var(--primary-green) !important; border-radius: 12px !important;
-        }
-
-        /* 7. GREEN BANNER */
-        .green-banner {
-            background-color: var(--primary-green); color: #ffffff !important;
-            padding: 40px 20px; display: flex; justify-content: space-around;
-            margin-top: 60px; margin-bottom: 0px; margin-left: -5rem; margin-right: -5rem;
-        }
-        .banner-item { display: flex; align-items: center; gap: 15px; flex: 1; padding: 0 20px; }
-        .banner-item i, .banner-item h3, .banner-item p { color: #ffffff !important; }
-        .banner-item h3 { font-size: 18px; font-weight: 900; margin: 0 0 5px 0; }
-        .banner-item p { font-size: 13px; margin: 0; }
-        
-        .header-pad { padding-top: 20px; }
-        .footer-pad { padding-bottom: 20px; }
+    .main-title { font-size: 2.5rem; font-weight: bold; color: #2E7D32; text-align: center; }
+    .sub-title { font-size: 1.2rem; text-align: center; margin-bottom: 2rem; }
+    .stButton>button { width: 100%; background-color: #2E7D32; color: white; border-radius: 8px; }
+    .history-card { padding: 15px; border-radius: 10px; border: 1px solid #ddd; margin-bottom: 10px; }
     </style>
-    """
-    return css
+""", unsafe_allow_html=True)
 
-def inject_custom_css():
-    css = get_cached_css()
-    st.markdown(css, unsafe_allow_html=True)
+# --- 2. CREDENTIALS & API SETUP ---
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+COSMOS_URI = os.environ.get("COSMOS_URI")
+COSMOS_KEY = os.environ.get("COSMOS_KEY")
 
-inject_custom_css()
+# Initialize OpenAI Client (using GitHub Models API)
+client = OpenAI(
+    base_url="https://models.inference.ai.azure.com",
+    api_key=GITHUB_TOKEN,
+)
 
-# ==========================================
-# 3. HELPER FUNCTIONS
-# ==========================================
+# Initialize Azure Cosmos DB Client
+container = None
+if COSMOS_URI and COSMOS_KEY:
+    try:
+        cosmos_client = CosmosClient(COSMOS_URI, credential=COSMOS_KEY)
+        database = cosmos_client.get_database_client("KrishivanData")
+        container = database.get_container_client("ChatHistory")
+    except Exception as e:
+        st.sidebar.error("Database connection issue. Running in stateless mode.")
+
+# --- 3. HELPER FUNCTIONS ---
+def save_to_database(user_query, ai_response, interaction_type):
+    """Saves the chat history to Azure Cosmos DB"""
+    if container is None:
+        return
+    
+    chat_item = {
+        "id": str(uuid.uuid4()),
+        "userId": "farmer_001",  # Hardcoded for the demo
+        "type": interaction_type,
+        "query": user_query,
+        "response": ai_response,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    try:
+        container.create_item(body=chat_item)
+    except Exception as e:
+        st.error(f"Failed to save history: {e}")
+
+def encode_image(image_file):
+    """Encodes uploaded image to Base64 for GPT-4o Vision"""
+    return base64.b64encode(image_file.getvalue()).decode('utf-8')
+
 def generate_audio(text, lang_code):
+    """Converts text to audio using gTTS"""
     try:
         tts = gTTS(text=text, lang=lang_code, slow=False)
-        sound_file = io.BytesIO()
-        tts.write_to_fp(sound_file)
-        sound_file.seek(0)
-        st.audio(sound_file, format='audio/mp3', autoplay=True)
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        return fp.getvalue()
     except Exception as e:
-        st.error(f"Audio error: {e}")
+        st.error("Audio generation failed for this language.")
+        return None
 
-# ==========================================
-# 4. TOP NAVIGATION BAR
-# ==========================================
-def render_top_nav(current_page):
-    st.markdown('<div class="header-pad"></div>', unsafe_allow_html=True)
-    c_logo, c_nav = st.columns([1, 2], vertical_alignment="center")
-    with c_logo:
-        st.markdown(f"<h2 style='margin:0;'><i class='fa-solid fa-leaf' style='color:#8CC63F;'></i> KrishivanX</h2>", unsafe_allow_html=True)
-    with c_nav:
-        nav = st.radio("Navigation", ["Home", "Image Input", "Audio Input"], index=["Home", "Image Input", "Audio Input"].index(current_page), horizontal=True, label_visibility="collapsed", key=f"nav_{current_page}")
-        if nav != current_page:
-            st.session_state.page = nav
-            st.rerun()
+def process_voice_input(audio_bytes, lang_code):
+    """Converts user's voice to text using SpeechRecognition"""
+    r = sr.Recognizer()
+    try:
+        with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+            audio_data = r.record(source)
+        # Convert to text using Google's free Web Speech API
+        text = r.recognize_google(audio_data, language=lang_code)
+        return text
+    except sr.UnknownValueError:
+        return "Sorry, could not understand the audio."
+    except Exception as e:
+        return f"Error processing audio: {e}"
 
-# ==========================================
-# 5. PAGE 1: HOME (LANDING PAGE)
-# ==========================================
-def page_home():
-    st.markdown('<div class="header-pad"></div>', unsafe_allow_html=True)
-    # Notice we removed the theme dropdown column to make it cleaner!
-    c1, c2, c3 = st.columns([5, 1, 1], vertical_alignment="center")
-    with c1:
-        st.markdown(f"<h2 style='margin:0;'><i class='fa-solid fa-leaf' style='color:#8CC63F;'></i> KrishivanX</h2>", unsafe_allow_html=True)
-    with c3:
-        current_lang_idx = list(SUPPORTED_LANGUAGES.keys()).index(st.session_state.stored_lang)
-        st.selectbox("Language", list(SUPPORTED_LANGUAGES.keys()), index=current_lang_idx, key="lang_widget", on_change=save_lang, label_visibility="collapsed")
+# --- 4. APP LAYOUT & LOGIC ---
+st.markdown('<div class="main-title">🌾 KrishivanX</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-title">Your AI Agricultural Assistant</div>', unsafe_allow_html=True)
 
-    st.markdown("""
-        <div style="text-align: center; margin-top: 80px; margin-bottom: 40px;">
-            <i class="fa-solid fa-tractor" style="font-size: 100px;"></i>
-            <h1 style="font-size: 45px; font-weight: 900; margin-top: 20px;">Welcome to KrishivanX</h1>
-        </div>
-    """, unsafe_allow_html=True)
+# Language Selection Dictionary (Mapping to gTTS/SpeechRecognition codes)
+LANGUAGES = {
+    "English": "en", "Hindi": "hi", "Marathi": "mr", "Bengali": "bn",
+    "Telugu": "te", "Tamil": "ta", "Kannada": "kn", "Malayalam": "ml",
+    "Gujarati": "gu", "Punjabi": "pa"
+}
+selected_lang_name = st.selectbox("Select Your Language / अपनी भाषा चुनें", list(LANGUAGES.keys()))
+lang_code = LANGUAGES[selected_lang_name]
 
-    _, btn_col, _ = st.columns([1, 1, 1])
-    with btn_col:
-        if st.button("Get started", type="primary", use_container_width=True):
-            st.session_state.page = "Image Input"
-            st.rerun()
+# App Tabs
+tab1, tab2, tab3 = st.tabs(["📷 Crop Doctor", "🎙️ Voice Assistant", "🗄️ My History"])
 
-    st.markdown("""
-        <div class="green-banner">
-            <div class="banner-item">
-                <i class="fa-solid fa-camera"></i>
-                <div><h3>Photo Upload</h3><p>Easily analyze your crops with images.</p></div>
-            </div>
-            <div class="banner-item">
-                <i class="fa-solid fa-volume-high"></i>
-                <div><h3>Audio Feedback</h3><p>Hear insights and guidance from experts.</p></div>
-            </div>
-            <div class="banner-item">
-                <i class="fa-solid fa-sun"></i>
-                <div><h3>Weather Insights</h3><p>Stay updated with real-time forecasts.</p></div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
+# --- TAB 1: CROP DOCTOR (VISION) ---
+with tab1:
+    st.write(f"**Upload a photo of your crop to instantly identify diseases.** ({selected_lang_name})")
+    uploaded_image = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
     
-    st.markdown("<div style='padding: 20px 0;'><b><i class='fa-solid fa-leaf' style='color:#8CC63F;'></i> KrishivanX</b> <span style='float:right;'><i class='fa-regular fa-face-smile'></i> KrishivanX</span></div>", unsafe_allow_html=True)
-    st.markdown('<div class="footer-pad"></div>', unsafe_allow_html=True)
-
-# ==========================================
-# 6. PAGE 2: IMAGE INPUT
-# ==========================================
-def page_image():
-    render_top_nav("Image Input")
-
-    st.markdown("<h2 style='text-align:center; margin-top:30px;'>Upload or Capture Your Image</h2>", unsafe_allow_html=True)
-    st.markdown("<div style='text-align: center; margin-bottom: 20px;'>Choose an option below to get started</div>", unsafe_allow_html=True)
-
-    img_mode = st.radio("mode", ["Take Photo", "Upload Image"], horizontal=True, label_visibility="collapsed")
-
-    img_to_process = None
-    if img_mode == "Take Photo":
-        img_to_process = st.camera_input("Take a picture", label_visibility="collapsed")
-    else:
-        img_to_process = st.file_uploader("Upload Image", type=["jpg", "png"], label_visibility="collapsed")
-
-    st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-    st.markdown("<h4 style='margin-top:0;'>Generated Responses</h4>", unsafe_allow_html=True)
-    
-    res_placeholder = st.empty()
-    
-    if img_to_process is not None and st.button("Run AI Diagnostics", type="primary"):
-        with st.spinner("Analyzing..."):
-            base64_image = base64.b64encode(img_to_process.read()).decode('utf-8')
-            lang_name = st.session_state.stored_lang 
-            sys_prompt = f"Identify disease and list 2 treatments. Be concise. Respond in {lang_name}."
-            
-            response = client.chat.completions.create(
-                model="gpt-4o", 
-                messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}]}], 
-                temperature=0.3)
-            
-            st.session_state.img_response = response.choices[0].message.content
-
-    if st.session_state.img_response:
-        res_placeholder.markdown(f'<div style="text-align:left; border:1px solid var(--border-color); padding:15px; border-radius:8px; margin-bottom:20px;">{st.session_state.img_response}</div>', unsafe_allow_html=True)
+    if uploaded_image is not None:
+        st.image(uploaded_image, caption="Uploaded Crop Image", use_container_width=True)
         
-        _, c_aud, c_clear, _ = st.columns([1, 1.5, 1.5, 1])
-        with c_aud:
-            st.button("Hear Audio Response", type="primary", on_click=generate_audio, args=(st.session_state.img_response, SUPPORTED_LANGUAGES[st.session_state.stored_lang][1]), use_container_width=True)
-        with c_clear:
-            if st.button("Clear Response", type="secondary", use_container_width=True):
-                st.session_state.img_response = None
-                st.rerun()
-    elif img_to_process is None:
-        st.session_state.img_response = None
-        res_placeholder.markdown("<p>Awaiting image upload...</p>", unsafe_allow_html=True)
-        
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('<div class="footer-pad"></div>', unsafe_allow_html=True)
-
-# ==========================================
-# 7. PAGE 3: AUDIO INPUT
-# ==========================================
-def page_audio():
-    render_top_nav("Audio Input")
-
-    st.markdown("<h2 style='text-align:center; margin-top:30px;'>Audio Input for Farmer Queries</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align:center;'>Follow the instructions below to record your query. Once submitted, you will receive a response which you can listen to.</p>", unsafe_allow_html=True)
-
-    st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-    st.markdown("<div style='background-color:#8CC63F; width:80px; height:80px; border-radius:50%; display:flex; justify-content:center; align-items:center; margin: 0 auto 20px auto;'><i class='fa-solid fa-microphone' style='font-size:35px; color:white;'></i></div>", unsafe_allow_html=True)
-    st.markdown("<p>Press the microphone button below to start recording your query.</p>", unsafe_allow_html=True)
-    
-    audio_value = st.audio_input("Record", label_visibility="collapsed")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-    st.markdown("<h4 style='margin-top:0;'>Your Responses</h4>", unsafe_allow_html=True)
-    
-    res_placeholder = st.empty()
-    
-    if audio_value is not None and st.button("Process Query", type="primary"):
-        with st.spinner("Listening & Fetching..."):
-            r = sr.Recognizer()
-            lang_name = st.session_state.stored_lang
-            stt_code = SUPPORTED_LANGUAGES[lang_name][0]
-            
-            try:
-                with sr.AudioFile(audio_value) as source:
-                    audio_data = r.record(source)
-                    user_spoken_text = r.recognize_google(audio_data, language=stt_code)
+        if st.button("Run AI Diagnostics"):
+            if not GITHUB_TOKEN:
+                st.error("API Key missing. Please check your Azure environment variables.")
+            else:
+                with st.spinner("Analyzing crop health..."):
+                    base64_image = encode_image(uploaded_image)
                     
-                sys_prompt = f"Answer the agricultural scheme query concisely. Respond in {lang_name}."
-                response = client.chat.completions.create(
-                    model="gpt-4o", messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_spoken_text}], temperature=0.3)
+                    system_prompt = f"You are an expert Indian agronomist. Identify the crop disease in the image and provide a low-cost treatment. Respond strictly in {selected_lang_name}. Keep it under 50 words."
+                    
+                    try:
+                        response = client.chat.completions.create(
+                            model="gpt-4o",
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": [
+                                    {"type": "text", "text": "What is wrong with this plant?"},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                                ]}
+                            ],
+                            temperature=0.3
+                        )
+                        
+                        ai_answer = response.choices[0].message.content
+                        st.success("Analysis Complete!")
+                        st.write(ai_answer)
+                        
+                        # Save to Database
+                        save_to_database("Uploaded Image for Diagnosis", ai_answer, "Vision")
+                        
+                    except Exception as e:
+                        st.error(f"AI Error: {e}")
+
+# --- TAB 2: VOICE ASSISTANT ---
+with tab2:
+    st.write(f"**Ask about government schemes, weather, or farming advice.** ({selected_lang_name})")
+    
+    # Text Input Fallback
+    text_query = st.text_input("Type your question here:")
+    
+    # Native Streamlit Audio Input
+    audio_value = st.audio_input("Or click the microphone to speak")
+    
+    user_query = ""
+    if audio_value:
+        with st.spinner("Processing your voice..."):
+            user_query = process_voice_input(audio_value.getvalue(), lang_code)
+            st.info(f"You asked: {user_query}")
+    elif text_query:
+        user_query = text_query
+
+    if user_query and user_query != "Sorry, could not understand the audio.":
+        if st.button("Get AI Answer"):
+            with st.spinner("Fetching information..."):
+                system_prompt = f"You are a helpful agricultural assistant for Indian farmers. Answer the following query accurately. Respond strictly in {selected_lang_name}. Keep it simple and under 50 words."
                 
-                st.session_state.aud_response = response.choices[0].message.content
+                try:
+                    response = client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_query}
+                        ],
+                        temperature=0.5
+                    )
+                    
+                    ai_answer = response.choices[0].message.content
+                    st.write("### AI Response:")
+                    st.write(ai_answer)
+                    
+                    # Generate Audio Output
+                    audio_response = generate_audio(ai_answer, lang_code)
+                    if audio_response:
+                        st.audio(audio_response, format="audio/mp3")
+                    
+                    # Save to Database
+                    save_to_database(user_query, ai_answer, "Chat/Voice")
+                    
+                except Exception as e:
+                    st.error(f"AI Error: {e}")
+
+# --- TAB 3: MY HISTORY (COSMOS DB) ---
+with tab3:
+    st.write("**Your Past AI Consultations (Saved securely in Azure Cosmos DB)**")
+    
+    if st.button("Refresh History"):
+        if container is None:
+            st.warning("Database is not connected.")
+        else:
+            try:
+                # Query the database for the user's history
+                query = "SELECT * FROM c WHERE c.userId='farmer_001' ORDER BY c.timestamp DESC"
+                items = list(container.query_items(query=query, enable_cross_partition_query=True))
+                
+                if not items:
+                    st.info("No history found yet. Ask the AI a question!")
+                else:
+                    for item in items:
+                        st.markdown(f"""
+                        <div class="history-card">
+                            <small style="color: gray;">{item.get('timestamp', '')[:10]} | Type: {item.get('type', 'Unknown')}</small><br>
+                            <b>Q:</b> {item.get('query', '')}<br>
+                            <b>A:</b> {item.get('response', '')}
+                        </div>
+                        """, unsafe_allow_html=True)
             except Exception as e:
-                st.error(f"Error processing audio: {e}")
-
-    if st.session_state.aud_response:
-        res_placeholder.markdown(f"<div style='text-align:left; border:1px solid var(--border-color); padding:15px; border-radius:8px; margin-bottom:20px;'><b>Query processed:</b><br>{st.session_state.aud_response}</div>", unsafe_allow_html=True)
-        
-        _, c_aud, c_clear, _ = st.columns([1, 1.5, 1.5, 1])
-        with c_aud:
-            st.button("Hear Audio Response", type="primary", on_click=generate_audio, args=(st.session_state.aud_response, SUPPORTED_LANGUAGES[st.session_state.stored_lang][1]), use_container_width=True)
-        with c_clear:
-            if st.button("Clear Response", type="secondary", use_container_width=True):
-                st.session_state.aud_response = None
-                st.rerun()
-    elif audio_value is None:
-        st.session_state.aud_response = None
-        res_placeholder.markdown("<p>Awaiting audio input...</p>", unsafe_allow_html=True)
-        
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('<div class="footer-pad"></div>', unsafe_allow_html=True)
-
-# ==========================================
-# 8. ROUTING ENGINE
-# ==========================================
-if st.session_state.page == 'Home':
-    page_home()
-elif st.session_state.page == 'Image Input':
-    page_image()
-elif st.session_state.page == 'Audio Input':
-
-    page_audio()
+                st.error(f"Failed to fetch history: {e}")
