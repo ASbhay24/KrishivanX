@@ -3,7 +3,7 @@
 **KrishivanX** is a comprehensive, multilingual AI assistant designed to bridge the technology gap for Indian farmers. By leveraging state-of-the-art vision models and voice recognition, KrishivanX provides instant, actionable agricultural insights directly to the farmer's smartphone.
 
 ### 🚀 Live Demo
-[**Click here to view the live application**](krishivanx-ayh3ahe4csfjc8f3.centralindia-01.azurewebsites.net)
+[**Click here to view the live application**](https://krishivanx-ayh3ahe4csfjc8f3.centralindia-01.azurewebsites.net/#welcome-to-krishivan-x)
 
 ---
 
