@@ -3,3 +3,4 @@ openai
 SpeechRecognition
 gTTS
 azure-cosmos
+Pillow
