@@ -102,7 +102,7 @@ if st.session_state.current_page == "landing":
         # Note: Upload your actual white tractor image to GitHub (e.g., 'tractor.png') 
         # and replace the URL below with just the filename "tractor.png"
         try:
-            st.image("D://KrishivanX//Tractor.PNG", width=250) 
+            st.image("Tractor.PNG", width=250) 
         except:
             # A fallback online icon just in case the local file isn't found
             st.image("https://cdn-icons-png.flaticon.com/512/2153/2153106.png", width=150)
@@ -280,3 +280,4 @@ elif st.session_state.current_page == "app":
                                 
                 except Exception as e: st.error(f"Failed to fetch records: {e}")
             else: st.warning("Database connection is missing.")
+
