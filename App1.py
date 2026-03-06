@@ -1,225 +1,282 @@
 import streamlit as st
-import os
-import base64
-import io
-import uuid
+import os, base64, io, uuid
 from datetime import datetime
 from openai import OpenAI
 import speech_recognition as sr
 from gtts import gTTS
+from azure.cosmos import CosmosClient
+from PIL import Image
 
-# Azure Cosmos DB imports
-from azure.cosmos import CosmosClient, exceptions
+# --- 1. PAGE CONFIG & STATE MANAGEMENT ---
+st.set_page_config(page_title="KrishivanX", page_icon="🚜", layout="centered")
 
-# --- 1. PAGE CONFIGURATION & UI SETUP ---
-st.set_page_config(page_title="KrishivanX - AI Crop Doctor", page_icon="🌾", layout="centered")
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "landing"
 
-# Custom CSS for adaptive Dark/Light mode and styling
+# --- 2. UI STYLING (Cleaned up for native Streamlit formatting) ---
 st.markdown("""
     <style>
-    .main-title { font-size: 2.5rem; font-weight: bold; color: #2E7D32; text-align: center; }
-    .sub-title { font-size: 1.2rem; text-align: center; margin-bottom: 2rem; }
-    .stButton>button { width: 100%; background-color: #2E7D32; color: white; border-radius: 8px; }
-    .history-card { padding: 15px; border-radius: 10px; border: 1px solid #ddd; margin-bottom: 10px; }
+    .block-container { padding-top: 1.5rem; }
+    header {visibility: hidden;}
+    .hero-box {
+        background: linear-gradient(135deg, #76b900 0%, #ffcc00 100%);
+        padding: 40px 20px; border-radius: 20px; text-align: center;
+        box-shadow: 0 8px 16px rgba(0,0,0,0.2); margin-bottom: 30px;
+    }
+    .hero-title { color: #111; font-size: 3.5rem; font-weight: 900; margin-bottom: 0px; line-height: 1.1; }
+    .hero-subtitle { color: #222; font-size: 1.3rem; font-weight: 600; margin-top: 10px; }
+    .feature-card { background-color: rgba(120, 120, 120, 0.1); padding: 20px; border-radius: 15px; text-align: center; border-bottom: 4px solid #76b900; height: 100%; }
+    
+    .stButton>button[kind="primary"] { background-color: #111 !important; color: #fff !important; border-radius: 30px; padding: 10px 30px; font-size: 1.2rem; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CREDENTIALS & API SETUP ---
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-COSMOS_URI = os.environ.get("COSMOS_URI")
-COSMOS_KEY = os.environ.get("COSMOS_KEY")
+# --- 3. LANGUAGES ---
+LANGUAGES = {
+    "English": "en", "Hindi (UP/MP/Bihar)": "hi", "Marathi (Maharashtra)": "mr", "Bengali (West Bengal)": "bn", 
+    "Telugu (AP/Telangana)": "te", "Tamil (Tamil Nadu)": "ta", "Gujarati (Gujarat)": "gu", "Punjabi (Punjab)": "pa", 
+    "Malayalam (Kerala)": "ml", "Kannada (Karnataka)": "kn", "Odia (Odisha)": "or", "Assamese (Assam)": "as", 
+    "Maithili (Bihar)": "mai", "Santali (Jharkhand)": "sat", "Kashmiri (J&K)": "ks", "Nepali (Sikkim)": "ne", 
+    "Konkani (Goa)": "kok", "Sindhi": "sd", "Dogri (J&K)": "doi", "Manipuri (Manipur)": "mni", 
+    "Bodo (Assam)": "brx", "Urdu": "ur", "Bhojpuri (Bihar/UP)": "hi", "Haryanvi (Haryana)": "hi", "Rajasthani (Rajasthan)": "hi"
+}
 
-# Initialize OpenAI Client (using GitHub Models API)
-client = OpenAI(
-    base_url="https://models.inference.ai.azure.com",
-    api_key=GITHUB_TOKEN,
-)
+# --- 4. BACKEND SETUP ---
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN") or st.secrets.get("GITHUB_TOKEN", "")
+COSMOS_URI = os.environ.get("COSMOS_URI") or st.secrets.get("COSMOS_URI", "")
+COSMOS_KEY = os.environ.get("COSMOS_KEY") or st.secrets.get("COSMOS_KEY", "")
 
-# Initialize Azure Cosmos DB Client
+client = OpenAI(base_url="https://models.inference.ai.azure.com", api_key=GITHUB_TOKEN)
+
 container = None
 if COSMOS_URI and COSMOS_KEY:
     try:
         cosmos_client = CosmosClient(COSMOS_URI, credential=COSMOS_KEY)
         database = cosmos_client.get_database_client("KrishivanData")
         container = database.get_container_client("ChatHistory")
-    except Exception as e:
-        st.sidebar.error("Database connection issue. Running in stateless mode.")
+    except: pass
 
-# --- 3. HELPER FUNCTIONS ---
-def save_to_database(user_query, ai_response, interaction_type):
-    """Saves the chat history to Azure Cosmos DB"""
-    if container is None:
-        return
-    
-    chat_item = {
-        "id": str(uuid.uuid4()),
-        "userId": "farmer_001",  # Hardcoded for the demo
-        "type": interaction_type,
-        "query": user_query,
-        "response": ai_response,
-        "timestamp": datetime.utcnow().isoformat()
-    }
+# --- 5. CORE FUNCTIONS ---
+def compress_and_encode_image(uploaded_file):
+    img = Image.open(uploaded_file)
+    img.thumbnail((500, 500)) 
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=80)
+    return base64.b64encode(buf.getvalue()).decode('utf-8')
+
+def save_to_db(query, response, itype, img_b64=None):
+    if container:
+        item = {"id": str(uuid.uuid4()), "userId": "farmer_001", "type": itype, "query": query, "response": response, "image": img_b64, "timestamp": datetime.utcnow().isoformat()}
+        try: container.create_item(body=item)
+        except: pass
+
+def clear_database():
+    if container:
+        try:
+            items = list(container.query_items("SELECT c.id, c.userId FROM c WHERE c.userId='farmer_001'", enable_cross_partition_query=True))
+            for item in items:
+                container.delete_item(item=item['id'], partition_key=item['userId'])
+        except Exception as e: pass
+
+def text_to_speech(text, lang):
     try:
-        container.create_item(body=chat_item)
-    except Exception as e:
-        st.error(f"Failed to save history: {e}")
-
-def encode_image(image_file):
-    """Encodes uploaded image to Base64 for GPT-4o Vision"""
-    return base64.b64encode(image_file.getvalue()).decode('utf-8')
-
-def generate_audio(text, lang_code):
-    """Converts text to audio using gTTS"""
-    try:
-        tts = gTTS(text=text, lang=lang_code, slow=False)
+        tts = gTTS(text=text, lang=lang)
         fp = io.BytesIO()
         tts.write_to_fp(fp)
         return fp.getvalue()
-    except Exception as e:
-        st.error("Audio generation failed for this language.")
-        return None
+    except: return None
 
-def process_voice_input(audio_bytes, lang_code):
-    """Converts user's voice to text using SpeechRecognition"""
-    r = sr.Recognizer()
-    try:
-        with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
-            audio_data = r.record(source)
-        # Convert to text using Google's free Web Speech API
-        text = r.recognize_google(audio_data, language=lang_code)
-        return text
-    except sr.UnknownValueError:
-        return "Sorry, could not understand the audio."
-    except Exception as e:
-        return f"Error processing audio: {e}"
+# --- 6. ROUTING LOGIC ---
 
-# --- 4. APP LAYOUT & LOGIC ---
-st.markdown('<div class="main-title">🌾 KrishivanX</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-title">Your AI Agricultural Assistant</div>', unsafe_allow_html=True)
-
-# Language Selection Dictionary (Mapping to gTTS/SpeechRecognition codes)
-LANGUAGES = {
-    "English": "en", "Hindi": "hi", "Marathi": "mr", "Bengali": "bn",
-    "Telugu": "te", "Tamil": "ta", "Kannada": "kn", "Malayalam": "ml",
-    "Gujarati": "gu", "Punjabi": "pa"
-}
-selected_lang_name = st.selectbox("Select Your Language / अपनी भाषा चुनें", list(LANGUAGES.keys()))
-lang_code = LANGUAGES[selected_lang_name]
-
-# App Tabs
-tab1, tab2, tab3 = st.tabs(["📷 Crop Doctor", "🎙️ Voice Assistant", "🗄️ My History"])
-
-# --- TAB 1: CROP DOCTOR (VISION) ---
-with tab1:
-    st.write(f"**Upload a photo of your crop to instantly identify diseases.** ({selected_lang_name})")
-    uploaded_image = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+# ROUTE A: LANDING PAGE
+if st.session_state.current_page == "landing":
     
-    if uploaded_image is not None:
-        st.image(uploaded_image, caption="Uploaded Crop Image", use_container_width=True)
+    st.write("<br>", unsafe_allow_html=True) # Adds comfortable top spacing
+    
+    # Use columns to perfectly center the content
+    col1, col2, col3 = st.columns([1, 1.5, 1])
+    with col2:
+        st.markdown('<div style="text-align:center;">', unsafe_allow_html=True)
         
-        if st.button("Run AI Diagnostics"):
-            if not GITHUB_TOKEN:
-                st.error("API Key missing. Please check your Azure environment variables.")
-            else:
-                with st.spinner("Analyzing crop health..."):
-                    base64_image = encode_image(uploaded_image)
-                    
-                    system_prompt = f"You are an expert Indian agronomist. Identify the crop disease in the image and provide a low-cost treatment. Respond strictly in {selected_lang_name}. Keep it under 50 words."
-                    
-                    try:
-                        response = client.chat.completions.create(
-                            model="gpt-4o",
-                            messages=[
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": [
-                                    {"type": "text", "text": "What is wrong with this plant?"},
-                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                                ]}
-                            ],
-                            temperature=0.3
-                        )
-                        
-                        ai_answer = response.choices[0].message.content
-                        st.success("Analysis Complete!")
-                        st.write(ai_answer)
-                        
-                        # Save to Database
-                        save_to_database("Uploaded Image for Diagnosis", ai_answer, "Vision")
-                        
-                    except Exception as e:
-                        st.error(f"AI Error: {e}")
+        # --- THE TRACTOR LOGO ---
+        # Note: Upload your actual white tractor image to GitHub (e.g., 'tractor.png') 
+        # and replace the URL below with just the filename "tractor.png"
+        try:
+            st.image("D://KrishivanX//Tractor.PNG", width=250) 
+        except:
+            # A fallback online icon just in case the local file isn't found
+            st.image("https://cdn-icons-png.flaticon.com/512/2153/2153106.png", width=150)
+            
+        st.markdown('<h1 style="font-size: 3.5rem; font-weight: 900; margin-top: 10px; margin-bottom: 30px;">Welcome to KrishivanX</h1>', unsafe_allow_html=True)
+        
+        # Custom CSS to force the button to your specific designer green
+        st.markdown("""
+            <style>
+            div[data-testid="stButton"] > button {
+                background-color: #76b900 !important;
+                color: white !important;
+                border-radius: 30px !important;
+                padding: 10px 30px !important;
+                font-size: 1.2rem !important;
+                font-weight: bold !important;
+                border: none !important;
+            }
+            div[data-testid="stButton"] > button:hover {
+                background-color: #8adb00 !important;
+                color: white !important;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        if st.button("Get started", use_container_width=True):
+            st.session_state.current_page = "app"
+            st.rerun()
 
-# --- TAB 2: VOICE ASSISTANT ---
-with tab2:
-    st.write(f"**Ask about government schemes, weather, or farming advice.** ({selected_lang_name})")
-    
-    # Text Input Fallback
-    text_query = st.text_input("Type your question here:")
-    
-    # Native Streamlit Audio Input
-    audio_value = st.audio_input("Or click the microphone to speak")
-    
-    user_query = ""
-    if audio_value:
-        with st.spinner("Processing your voice..."):
-            user_query = process_voice_input(audio_value.getvalue(), lang_code)
-            st.info(f"You asked: {user_query}")
-    elif text_query:
-        user_query = text_query
+    st.write("<br>", unsafe_allow_html=True)
+    st.write("<br>", unsafe_allow_html=True)
+    f1, f2, f3 = st.columns(3)
+    with f1: st.markdown('<div class="feature-card"><h3>📷</h3><b>Visual Scan</b><br><small>Detect crop diseases instantly.</small></div>', unsafe_allow_html=True)
+    with f2: st.markdown('<div class="feature-card"><h3>🎙️</h3><b>Voice AI</b><br><small>Ask questions in your local language.</small></div>', unsafe_allow_html=True)
+    with f3: st.markdown('<div class="feature-card"><h3>🗄️</h3><b>Cloud DB</b><br><small>Securely save your farm history.</small></div>', unsafe_allow_html=True)
+            
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    if user_query and user_query != "Sorry, could not understand the audio.":
-        if st.button("Get AI Answer"):
-            with st.spinner("Fetching information..."):
-                system_prompt = f"You are a helpful agricultural assistant for Indian farmers. Answer the following query accurately. Respond strictly in {selected_lang_name}. Keep it simple and under 50 words."
+# # ROUTE A: LANDING PAGE
+# if st.session_state.current_page == "landing":
+#     st.markdown('<div class="hero-box"><h1 class="hero-title">KrishivanX</h1><p class="hero-subtitle">Your Digital Farming Partner</p></div>', unsafe_allow_html=True)
+    
+#     col1, col2, col3 = st.columns([1, 1.5, 1])
+#     with col2:
+#         if st.button("Launch App ➔", type="primary", use_container_width=True):
+#             st.session_state.current_page = "app"
+#             st.rerun()
+            
+#     st.write("<br>", unsafe_allow_html=True)
+#     f1, f2, f3 = st.columns(3)
+#     with f1: st.markdown('<div class="feature-card"><h3>📷</h3><b>Visual Scan</b><br><small>Detect crop diseases instantly.</small></div>', unsafe_allow_html=True)
+#     with f2: st.markdown('<div class="feature-card"><h3>🎙️</h3><b>Voice AI</b><br><small>Ask questions in your local language.</small></div>', unsafe_allow_html=True)
+#     with f3: st.markdown('<div class="feature-card"><h3>🗄️</h3><b>Cloud DB</b><br><small>Securely save your farm history.</small></div>', unsafe_allow_html=True)
+
+# ROUTE B: MAIN APPLICATION
+elif st.session_state.current_page == "app":
+    
+    # --- TOP NAVIGATION BAR ---
+    nav1, nav2, nav3, nav4 = st.columns([2.5, 1, 1, 1.5])
+    with nav1: st.markdown("### 🌿 KrishivanX")
+    with nav2:
+        if st.button("🏠 Home", use_container_width=True):
+            st.session_state.current_page = "landing"
+            st.rerun()
+    with nav3:
+        if st.button("🔄 Restart", use_container_width=True):
+            with st.spinner("Erasing cloud records..."):
+                clear_database()
+            st.session_state.clear()
+            st.session_state.current_page = "landing"
+            st.rerun()
+    with nav4:
+        sel_lang = st.selectbox("Language", list(LANGUAGES.keys()), label_visibility="collapsed")
+        l_code = LANGUAGES[sel_lang]
+        
+    st.write("---")
+
+    # --- MAIN TABS ---
+    tab1, tab2, tab3 = st.tabs(["📷 Crop Scanner", "🎙️ Audio Advisory", "🗄️ My Records"])
+
+    # TAB 1: VISION 
+    with tab1:
+        up_img = st.file_uploader("Upload a clear photo of the infected leaf", type=["jpg", "png", "jpeg"])
+        if up_img and st.button("Run Diagnostics"):
+            with st.spinner("Analyzing cell structure & generating detailed report..."):
+                b64_compressed = compress_and_encode_image(up_img)
+                
+                sys_prompt = f"""You are an expert agricultural scientist advising a farmer. 
+                Analyze the image and provide a highly detailed 100 to 150-word report in {sel_lang}.
+                Strictly use this markdown format:
+                **Disease:** [Name of the disease]
+                **Organic/Home Remedy:** [Detailed steps for basic organic treatment, using readily available materials]
+                **Chemical Remedy:** [Specific chemical names, dosage, and usage instructions]
+                **Govt Scheme:** [Relevant Indian govt scheme, e.g., PM Fasal Bima Yojana]
+                **Documents Needed:** [2-3 required documents]
+                **Estimated Time & Cost:** [Approximate time to avail scheme and official fees]
+                Ensure the remedy sections are descriptive and helpful."""
                 
                 try:
-                    response = client.chat.completions.create(
+                    resp = client.chat.completions.create(
                         model="gpt-4o",
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_query}
-                        ],
-                        temperature=0.5
+                        messages=[{"role": "system", "content": sys_prompt},
+                                  {"role": "user", "content": [{"type": "text", "text": "Diagnose this thoroughly:"}, 
+                                                               {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_compressed}"}}]}]
                     )
+                    ans = resp.choices[0].message.content
+                    st.success("Comprehensive Diagnosis Complete")
+                    st.markdown(ans)
                     
-                    ai_answer = response.choices[0].message.content
-                    st.write("### AI Response:")
-                    st.write(ai_answer)
+                    audio_bytes = text_to_speech(ans, l_code)
+                    if audio_bytes: st.audio(audio_bytes, format="audio/mp3")
                     
-                    # Generate Audio Output
-                    audio_response = generate_audio(ai_answer, lang_code)
-                    if audio_response:
-                        st.audio(audio_response, format="audio/mp3")
-                    
-                    # Save to Database
-                    save_to_database(user_query, ai_answer, "Chat/Voice")
-                    
-                except Exception as e:
-                    st.error(f"AI Error: {e}")
+                    save_to_db("Detailed Visual Diagnosis", ans, "Scanner", b64_compressed)
+                except Exception as e: st.error("Diagnosis failed. Check API key.")
 
-# --- TAB 3: MY HISTORY (COSMOS DB) ---
-with tab3:
-    st.write("**Your Past AI Consultations (Saved securely in Azure Cosmos DB)**")
-    
-    if st.button("Refresh History"):
-        if container is None:
-            st.warning("Database is not connected.")
-        else:
-            try:
-                # Query the database for the user's history
-                query = "SELECT * FROM c WHERE c.userId='farmer_001' ORDER BY c.timestamp DESC"
-                items = list(container.query_items(query=query, enable_cross_partition_query=True))
-                
-                if not items:
-                    st.info("No history found yet. Ask the AI a question!")
-                else:
-                    for item in items:
-                        st.markdown(f"""
-                        <div class="history-card">
-                            <small style="color: gray;">{item.get('timestamp', '')[:10]} | Type: {item.get('type', 'Unknown')}</small><br>
-                            <b>Q:</b> {item.get('query', '')}<br>
-                            <b>A:</b> {item.get('response', '')}
-                        </div>
-                        """, unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"Failed to fetch history: {e}")
+    # TAB 2: VOICE ASSISTANT (Fixed Infinite Loop Trigger)
+    with tab2:
+        aud = st.audio_input("Tap to ask about farming, loans, or government schemes")
+        
+        # FIX: Added an explicit trigger button so it doesn't re-run every time you switch tabs!
+        if aud and st.button("Generate Action Plan"):
+            with st.spinner("Transcribing and building roadmap..."):
+                r = sr.Recognizer()
+                try:
+                    with sr.AudioFile(io.BytesIO(aud.getvalue())) as src:
+                        q = r.recognize_google(r.record(src), language=l_code)
+                    
+                    st.info(f"You asked: {q}")
+                    
+                    sys_prompt = f"""You are an expert agricultural and government schemes advisor for Indian farmers. 
+                    Analyze the user's query and provide a detailed 100 to 150-word action plan in {sel_lang}.
+                    Strictly use this markdown format:
+                    **Core Problem:** [Identify the issue/need in 1 sentence]
+                    **Practical Remedy:** [Immediate actionable advice or solution]
+                    **Relevant Govt Scheme:** [Exact name of the scheme, e.g., PM-KISAN, KCC, NABARD Subsidy]
+                    **Where to Go & Who to Meet:** [Specify the exact local office like 'CSC Center', 'Block Development Office (BDO)', or 'Gram Panchayat', and the official's title]
+                    **Documents Required:** [List 3-4 essential documents like Aadhar, Land Registry/Khatauni, Bank Passbook]
+                    **Estimated Time & Money:** [Approximate processing time (e.g., 15-30 days) and standard official fees (e.g., CSC portal fee of ₹30-50). Clarify if the scheme itself is free.]"""
+                    
+                    resp = client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": q}]
+                    )
+                    ans = resp.choices[0].message.content
+                    st.markdown(ans)
+                    
+                    audio_bytes = text_to_speech(ans, l_code)
+                    if audio_bytes: st.audio(audio_bytes, format="audio/mp3")
+                    
+                    save_to_db(q, ans, "Audio", None)
+                except sr.UnknownValueError: st.error("Could not understand the audio. Please try again.")
+
+    # TAB 3: HISTORY (Rebuilt for Native Markdown Formatting)
+    with tab3:
+        if st.button("Sync Cloud Records"):
+            if container:
+                try:
+                    items = list(container.query_items("SELECT * FROM c WHERE c.userId='farmer_001' ORDER BY c.timestamp DESC", enable_cross_partition_query=True))
+                    if not items: st.info("No records found.")
+                    
+                    for it in items:
+                        with st.container(border=True): # Gives a nice clean border natively
+                            st.caption(f"**Type:** {it['type']} | **Date:** {it['timestamp'][:10]}")
+                            st.markdown(f"**Q:** {it['query']}")
+                            
+                            # Safely split layout to allow images beside text without breaking formatting
+                            if it.get("image"):
+                                img_col, text_col = st.columns([1, 2.5])
+                                with img_col:
+                                    st.image(base64.b64decode(it["image"]), use_container_width=True)
+                                with text_col:
+                                    st.markdown(f"**A:**\n{it['response']}")
+                            else:
+                                st.markdown(f"**A:**\n{it['response']}")
+                                
+                except Exception as e: st.error(f"Failed to fetch records: {e}")
+            else: st.warning("Database connection is missing.")
