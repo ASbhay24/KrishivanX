@@ -1,33 +1,28 @@
-# 🌱 KrishivanX: Empowering Farmers with AI
+# 🚜 KrishivanX: Digital Farming Partner & FinTech Advisory
 
-**KrishivanX** is a comprehensive, multilingual AI assistant designed to bridge the technology gap for Indian farmers. By leveraging state-of-the-art vision models and voice recognition, KrishivanX provides instant, actionable agricultural insights directly to the farmer's smartphone.
+### 🌐 Live Demo: [Click here to launch KrishivanX](https://krishivanx-ayh3ahe4csfjc8f3.centralindia-01.azurewebsites.net/)
 
-### 🚀 Live Demo
-[**Click here to view the live application**](https://krishivanx-ayh3ahe4csfjc8f3.centralindia-01.azurewebsites.net/#welcome-to-krishivan-x)
+**KrishivanX** is a comprehensive, AI-powered agricultural advisory platform designed to empower rural Indian farmers. It bridges the gap between crop disease diagnosis and government financial relief by providing instant, multilingual visual diagnostics and a voice-activated bureaucratic roadmap.
 
----
+## 🚀 The Problem & Solution
+Diagnosing a crop disease is only half the battle; navigating the bureaucracy to secure financial relief or subsidies is the true hurdle. 
+KrishivanX solves this by acting as an end-to-end advisor: it scans the diseased crop, identifies the pathogen, provides immediate organic/chemical remedies, and instantly maps out the exact government scheme (including documents needed, office locations, and processing times) required for financial support.
 
 ## ✨ Key Features
+* **📷 AI Visual Diagnostics:** Upload a photo of an infected leaf to receive a comprehensive 150-word diagnostic report using Vision AI. Includes both organic and chemical treatment plans.
+* **🎙️ Multilingual Voice Advisory:** Speak naturally in over 25+ Indian regional languages and dialects. The AI transcribes, processes, and responds via text and text-to-speech (TTS) audio.
+* **🏛️ FinTech & Bureaucratic Roadmap:** Generates step-by-step action plans for government schemes (e.g., PM Fasal Bima Yojana, PM-KISAN), detailing required documents, specific local offices to visit, and estimated costs.
+* **🗄️ Secure Cloud History:** All farmer consultations, including compressed image data and voice query transcripts, are securely logged into an enterprise-grade NoSQL database for future reference.
+* **🌗 Adaptive UI:** A fully responsive, app-like interface built with Streamlit that adapts to user devices.
 
-* **🩺 AI Crop Doctor (Vision):** Snap a photo of an infected leaf, and our vision model instantly identifies the disease and provides low-cost, actionable treatments.
-* **🏛️ Government Scheme Navigator (Voice):** Farmers can speak directly into the app to ask about subsidies, loans, and government schemes. The AI processes the audio, finds the exact scheme, lists eligibility requirements, and reads the answer out loud.
-* **🌐 Multilingual Support:** Built for India. Supports 12 regional languages including Hindi, Marathi, Bengali, Telugu, Tamil, Kannada, Malayalam, Gujarati, Punjabi, Odia, and Assamese.
-* **🌓 Adaptive UI:** A fully custom, product-grade Streamlit interface that automatically syncs with the user's system Dark/Light mode for maximum readability in the field.
+## 🛠️ Tech Stack & Architecture
+* **Frontend:** Streamlit, Custom CSS/HTML, Pillow (Image Compression)
+* **Backend Brain:** Azure GitHub Models API (GPT-4o Vision & Text)
+* **Audio Processing:** SpeechRecognition (Google Web Speech API), gTTS (Google Text-to-Speech)
+* **Database:** Azure Cosmos DB for NoSQL (Serverless)
+* **Hosting:** Microsoft Azure Web Apps
 
----
-
-## 🛠️ Tech Stack
-
-* **Frontend:** Python, Streamlit (with advanced custom CSS injection)
-* **AI Engine:** OpenAI GPT-4o (Vision & Text) via GitHub Models API
-* **Audio Processing:** `SpeechRecognition` (Google Web Speech API), `gTTS` (Google Text-to-Speech)
-* **Deployment:** Streamlit Community Cloud
-
----
-
-## 💻 How to Run Locally
-
-If you want to run this project on your local machine:
+## ⚙️ Local Setup Instructions
 
 1. **Clone the repository:**
    ```bash
